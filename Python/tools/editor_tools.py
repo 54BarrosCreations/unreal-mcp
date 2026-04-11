@@ -81,7 +81,9 @@ def register_editor_tools(mcp: FastMCP):
         name: str,
         type: str,
         location: List[float] = [0.0, 0.0, 0.0],
-        rotation: List[float] = [0.0, 0.0, 0.0]
+        rotation: List[float] = [0.0, 0.0, 0.0],
+        mesh_path: str = "",
+        material_path: str = ""
     ) -> Dict[str, Any]:
         """Create a new actor in the current level.
         
@@ -106,7 +108,7 @@ def register_editor_tools(mcp: FastMCP):
             # Ensure all parameters are properly formatted
             params = {
                 "name": name,
-                "type": type.upper(),  # Make sure type is uppercase
+                "type": type,  # Make sure type is uppercase
                 "location": location,
                 "rotation": rotation
             }
@@ -312,7 +314,9 @@ def register_editor_tools(mcp: FastMCP):
         blueprint_name: str,
         actor_name: str,
         location: List[float] = [0.0, 0.0, 0.0],
-        rotation: List[float] = [0.0, 0.0, 0.0]
+        rotation: List[float] = [0.0, 0.0, 0.0],
+        mesh_path: str = "",
+        material_path: str = ""
     ) -> Dict[str, Any]:
         """Spawn an actor from a Blueprint.
         

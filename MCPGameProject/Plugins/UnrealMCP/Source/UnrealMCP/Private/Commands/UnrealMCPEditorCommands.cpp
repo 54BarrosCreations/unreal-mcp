@@ -15,6 +15,10 @@
 #include "Engine/PointLight.h"
 #include "Engine/SpotLight.h"
 #include "Camera/CameraActor.h"
+#include "Engine/TextRenderActor.h"
+#include "Components/TextRenderComponent.h"
+#include "Engine/SkyLight.h"
+#include "EditorAssetLibrary.h"
 #include "Components/StaticMeshComponent.h"
 #include "EditorSubsystem.h"
 #include "Subsystems/EditorActorSubsystem.h"
@@ -73,6 +77,10 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCommand(const FString& C
     else if (CommandType == TEXT("take_screenshot"))
     {
         return HandleTakeScreenshot(Params);
+    }
+    else if (CommandType == TEXT("set_actor_material"))
+    {
+        return HandleSetActorMaterial(Params);
     }
     
     return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown editor command: %s"), *CommandType));
@@ -158,6 +166,12 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSpawnActor(const TShared
         Scale = FUnrealMCPCommonUtils::GetVectorFromJson(Params, TEXT("scale"));
     }
 
+    // Get optional mesh_path and material_path
+    FString MeshPath;
+    Params->TryGetStringField(TEXT("mesh_path"), MeshPath);
+    FString MaterialPath;
+    Params->TryGetStringField(TEXT("material_path"), MaterialPath);
+
     // Create the actor based on type
     AActor* NewActor = nullptr;
     UWorld* World = GEditor->GetEditorWorldContext().World();
@@ -181,9 +195,72 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSpawnActor(const TShared
     FActorSpawnParameters SpawnParams;
     SpawnParams.Name = *ActorName;
 
+    // Basic shape shortcuts - auto-assign mesh_path
+    if (ActorType == TEXT("Cube") || ActorType == TEXT("cube"))
+    {
+        ActorType = TEXT("StaticMeshActor");
+        if (MeshPath.IsEmpty()) MeshPath = TEXT("/Engine/BasicShapes/Cube.Cube");
+    }
+    else if (ActorType == TEXT("Sphere") || ActorType == TEXT("sphere"))
+    {
+        ActorType = TEXT("StaticMeshActor");
+        if (MeshPath.IsEmpty()) MeshPath = TEXT("/Engine/BasicShapes/Sphere.Sphere");
+    }
+    else if (ActorType == TEXT("Cylinder") || ActorType == TEXT("cylinder"))
+    {
+        ActorType = TEXT("StaticMeshActor");
+        if (MeshPath.IsEmpty()) MeshPath = TEXT("/Engine/BasicShapes/Cylinder.Cylinder");
+    }
+    else if (ActorType == TEXT("Plane") || ActorType == TEXT("plane"))
+    {
+        ActorType = TEXT("StaticMeshActor");
+        if (MeshPath.IsEmpty()) MeshPath = TEXT("/Engine/BasicShapes/Plane.Plane");
+    }
+    else if (ActorType == TEXT("Cone") || ActorType == TEXT("cone"))
+    {
+        ActorType = TEXT("StaticMeshActor");
+        if (MeshPath.IsEmpty()) MeshPath = TEXT("/Engine/BasicShapes/Cone.Cone");
+    }
+
     if (ActorType == TEXT("StaticMeshActor"))
     {
         NewActor = World->SpawnActor<AStaticMeshActor>(AStaticMeshActor::StaticClass(), Location, Rotation, SpawnParams);
+        
+        // Set mesh if mesh_path provided
+        if (NewActor && !MeshPath.IsEmpty())
+        {
+            AStaticMeshActor* MeshActor = Cast<AStaticMeshActor>(NewActor);
+            if (MeshActor && MeshActor->GetStaticMeshComponent())
+            {
+                UStaticMesh* Mesh = Cast<UStaticMesh>(UEditorAssetLibrary::LoadAsset(MeshPath));
+                if (Mesh)
+                {
+                    MeshActor->GetStaticMeshComponent()->SetStaticMesh(Mesh);
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("Failed to load mesh: %s"), *MeshPath);
+                }
+            }
+        }
+        
+        // Set material if material_path provided
+        if (NewActor && !MaterialPath.IsEmpty())
+        {
+            AStaticMeshActor* MeshActor = Cast<AStaticMeshActor>(NewActor);
+            if (MeshActor && MeshActor->GetStaticMeshComponent())
+            {
+                UMaterialInterface* Material = Cast<UMaterialInterface>(UEditorAssetLibrary::LoadAsset(MaterialPath));
+                if (Material)
+                {
+                    MeshActor->GetStaticMeshComponent()->SetMaterial(0, Material);
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("Failed to load material: %s"), *MaterialPath);
+                }
+            }
+        }
     }
     else if (ActorType == TEXT("PointLight"))
     {
@@ -201,9 +278,33 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSpawnActor(const TShared
     {
         NewActor = World->SpawnActor<ACameraActor>(ACameraActor::StaticClass(), Location, Rotation, SpawnParams);
     }
+    else if (ActorType == TEXT("SkyLight"))
+    {
+        NewActor = World->SpawnActor<ASkyLight>(ASkyLight::StaticClass(), Location, Rotation, SpawnParams);
+    }
+    else if (ActorType == TEXT("TextRenderActor"))
+    {
+        ATextRenderActor* TextActor = World->SpawnActor<ATextRenderActor>(ATextRenderActor::StaticClass(), Location, Rotation, SpawnParams);
+        if (TextActor)
+        {
+            // Set text if provided
+            FString TextContent;
+            if (Params->TryGetStringField(TEXT("text"), TextContent))
+            {
+                TextActor->GetTextRender()->SetText(FText::FromString(TextContent));
+            }
+            // Set text size if provided
+            double TextSize = 0;
+            if (Params->TryGetNumberField(TEXT("text_size"), TextSize))
+            {
+                TextActor->GetTextRender()->SetWorldSize(TextSize);
+            }
+            NewActor = TextActor;
+        }
+    }
     else
     {
-        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown actor type: %s"), *ActorType));
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown actor type: %s. Supported types: StaticMeshActor, Cube, Sphere, Cylinder, Plane, Cone, PointLight, SpotLight, DirectionalLight, SkyLight, CameraActor, TextRenderActor"), *ActorType));
     }
 
     if (NewActor)
@@ -220,6 +321,65 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSpawnActor(const TShared
     return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to create actor"));
 }
 
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSetActorMaterial(const TSharedPtr<FJsonObject>& Params)
+{
+    FString ActorName;
+    if (!Params->TryGetStringField(TEXT("name"), ActorName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'name' parameter"));
+    }
+
+    FString MaterialPathStr;
+    if (!Params->TryGetStringField(TEXT("material_path"), MaterialPathStr))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'material_path' parameter"));
+    }
+
+    int32 SlotIndex = 0;
+    Params->TryGetNumberField(TEXT("slot_index"), SlotIndex);
+
+    // Find the actor
+    AActor* TargetActor = nullptr;
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(GWorld, AActor::StaticClass(), AllActors);
+    for (AActor* Actor : AllActors)
+    {
+        if (Actor && Actor->GetName() == ActorName)
+        {
+            TargetActor = Actor;
+            break;
+        }
+    }
+
+    if (!TargetActor)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor not found: %s"), *ActorName));
+    }
+
+    // Load the material
+    UMaterialInterface* Material = Cast<UMaterialInterface>(UEditorAssetLibrary::LoadAsset(MaterialPathStr));
+    if (!Material)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Material not found: %s"), *MaterialPathStr));
+    }
+
+    // Apply to StaticMeshComponent if available
+    AStaticMeshActor* MeshActor = Cast<AStaticMeshActor>(TargetActor);
+    if (MeshActor && MeshActor->GetStaticMeshComponent())
+    {
+        MeshActor->GetStaticMeshComponent()->SetMaterial(SlotIndex, Material);
+
+        TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+        ResultObj->SetStringField(TEXT("actor"), ActorName);
+        ResultObj->SetStringField(TEXT("material"), MaterialPathStr);
+        ResultObj->SetNumberField(TEXT("slot"), SlotIndex);
+        ResultObj->SetBoolField(TEXT("success"), true);
+        return ResultObj;
+    }
+
+    return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Actor does not have a StaticMeshComponent"));
+}
 TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleDeleteActor(const TSharedPtr<FJsonObject>& Params)
 {
     FString ActorName;
